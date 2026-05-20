@@ -195,6 +195,9 @@
   .footer-inner { max-width: 1280px; margin: 0 auto; display: flex; justify-content: space-between; font-size: 11px; color: #78716c; flex-wrap: wrap; gap: 8px; }
 
   .hidden { display: none !important; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
+  .viewer-banner { background: rgba(120,113,108,0.15); border: 1px solid #57534e; color: #a8a29e; padding: 10px 16px; font-size: 12px; letter-spacing: 0.05em; margin-bottom: 16px; }
+
   .flex { display: flex; }
   .gap-2 { gap: 8px; }
   .items-center { align-items: center; }
@@ -230,6 +233,31 @@
 </head>
 <body>
 
+<!-- ====== LOGIN PAGE ====== -->
+<div id="loginPage" style="display:none;min-height:100vh;align-items:center;justify-content:center;background:#1c1917;padding:24px;flex-direction:column;gap:16px">
+  <div style="background:#292524;border:2px solid #f59e0b;padding:36px;width:100%;max-width:420px">
+    <div style="width:56px;height:56px;background:#f59e0b;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 16px">⚒</div>
+    <div style="text-align:center;font-size:17px;font-weight:bold;letter-spacing:0.08em;margin-bottom:4px">PROJECT CONTROL SYSTEM</div>
+    <div style="text-align:center;font-size:11px;color:#a8a29e;letter-spacing:0.2em;margin-bottom:24px">ROAD CONSTRUCTION DASHBOARD</div>
+    <div id="loginErr" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);color:#f87171;padding:10px;font-size:12px;margin-bottom:14px;display:none;letter-spacing:0.05em"></div>
+    <label style="display:block;font-size:11px;letter-spacing:0.1em;color:#a8a29e;margin-bottom:4px">EMAIL ADDRESS</label>
+    <input id="loginEmail" type="email" placeholder="your@email.com"
+      style="width:100%;background:#1c1917;border:1px solid #57534e;padding:11px;color:#f5f5f4;font-size:14px;font-family:inherit;margin-bottom:12px"
+      onkeydown="if(event.key==='Enter')doLogin()" />
+    <label style="display:block;font-size:11px;letter-spacing:0.1em;color:#a8a29e;margin-bottom:4px">PASSWORD</label>
+    <input id="loginPwd" type="password" placeholder="••••••••"
+      style="width:100%;background:#1c1917;border:1px solid #57534e;padding:11px;color:#f5f5f4;font-size:14px;font-family:inherit;margin-bottom:18px"
+      onkeydown="if(event.key==='Enter')doLogin()" />
+    <button onclick="doLogin()"
+      style="width:100%;background:#f59e0b;color:#0c0a09;padding:13px;font-size:13px;font-weight:bold;letter-spacing:0.15em;border:none;cursor:pointer;font-family:inherit">
+      LOG IN →
+    </button>
+  </div>
+</div>
+
+<!-- ====== APP PAGE ====== -->
+<div id="appPage" style="display:none">
+
 <header class="header">
   <div class="header-inner">
     <div class="brand">
@@ -239,11 +267,20 @@
         <h1 class="brand-title" id="brandTitle">ROAD CONSTRUCTION DASHBOARD</h1>
       </div>
     </div>
-    <div class="header-actions">
-      <button class="btn" onclick="exportDailyCSV()">⬇ CSV</button>
-      <button class="btn btn-primary" onclick="exportAllData()">⬇ BACKUP</button>
-      <button class="btn" onclick="document.getElementById('importFile').click()">⬆ RESTORE</button>
+    <div class="header-actions" style="align-items:center;gap:8px;flex-wrap:wrap">
+      <!-- User info -->
+      <span id="userNameBadge" style="font-size:11px;color:#a8a29e;background:#292524;border:1px solid #44403c;padding:5px 10px"></span>
+      <span id="roleBadge" style="font-size:10px;font-weight:bold;letter-spacing:0.1em;padding:4px 9px;border-radius:2px"></span>
+      <!-- Sync indicator -->
+      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#34d399">
+        <span style="width:7px;height:7px;border-radius:50%;background:#10b981;animation:pulse 2s infinite;display:inline-block"></span>
+        LIVE
+      </span>
+      <!-- Actions -->
+      <button class="btn btn-sm" onclick="exportAllData()">⬇ BACKUP</button>
+      <button id="restoreBtn" class="btn btn-sm" onclick="document.getElementById('importFile').click()" style="display:none">⬆ RESTORE</button>
       <input type="file" id="importFile" accept=".json" class="hidden" onchange="importData(event)" />
+      <button class="btn btn-sm" onclick="doLogout()">LOG OUT</button>
     </div>
   </div>
   <nav class="tabs">
@@ -255,17 +292,25 @@
 
 <footer class="footer">
   <div class="footer-inner">
-    <div>PROJECT CONTROL SYSTEM · v2.0</div>
-    <div>Data saves automatically · Use BACKUP regularly</div>
+    <div>PROJECT CONTROL SYSTEM · v4.0 · LIVE</div>
+    <div id="footerStatus">Ready</div>
   </div>
 </footer>
 
-<!-- Hidden DPR print container for export rendering -->
+</div><!-- end appPage -->
+
+<!-- Hidden print container for export rendering -->
 <div id="dprPrintContainer" style="position:absolute;left:-9999px;top:0;"></div>
 
 <script>
 // ================== STATE ==================
-const STORAGE_KEY = 'roadConstructionDashboard_v3';
+const STORAGE_KEY = 'roadConstructionDashboard_v3'; // kept for offline fallback only
+
+// Current logged-in user (from server)
+let currentUser = null;
+let syncInterval = null;
+let lastSyncTime = 0;
+let pendingSaves = {}; // queue of unsaved keys
 
 let state = {
   projectInfo: {
@@ -284,10 +329,12 @@ let state = {
   dailyTargets: [],
   serviceMachines: [],
   serviceLog: [],
-  attendance: [],     // daily attendance register
+  attendance: [],
   activeTab: 'overview',
   ganttZoom: 'week',
   currentFolderId: null,
+  teamSubTab: 'roster',
+  attendanceViewDate: null,
   showDailyForm: false, dailyForm: defaultDaily(), dailyEditingId: null,
   showWeeklyForm: false, weeklyForm: defaultWeekly(), weeklyEditingId: null,
   showMonthlyForm: false, monthlyForm: defaultMonthly(), monthlyEditingId: null,
@@ -301,7 +348,9 @@ let state = {
   showSicknessForm: false, sicknessForm: defaultSickness(), sicknessEditingId: null,
   showDailyTargetForm: false, dailyTargetForm: defaultDailyTarget(), dailyTargetEditingId: null,
   showSMForm: false, smForm: defaultSM(), smEditingId: null,
-  showSLForm: false, slForm: defaultSL()
+  showSLForm: false, slForm: defaultSL(),
+  showUserForm: false, userForm: { name: '', email: '', password: '', role: 'foreman' }, userEditingId: null,
+  users: []
 };
 
 function defaultDaily() { return { date: todayISO(), weather: 'Clear', temperature: '', workZone: '', chainageFrom: '', chainageTo: '', width: '', thickness: '', activity: 'Cut to Spoil', description: '', manpower: '', equipment: '', materialsUsed: '', quantityAchieved: '', unit: 'm³', qualityTests: '', safetyIncidents: 'None', delays: '', remarks: '', photos: [] }; }
@@ -314,78 +363,301 @@ function defaultGantt() { return { taskName: '', category: 'Earthworks', startDa
 function defaultCompletion() { return { taskName: '', completedDate: todayISO(), status: 'Success', chainageFrom: '', chainageTo: '', summary: '', reasonIfFailed: '', responsiblePerson: '', files: [], photos: [] }; }
 function defaultTeam() { return { name: '', role: 'General Worker', idNumber: '', phone: '', employmentDate: todayISO(), status: 'Active', emergencyContact: '', notes: '' }; }
 function defaultSickness() { return { teamMemberId: '', teamMemberName: '', dateSick: todayISO(), sickLeave: 'No', dateReturned: '', illness: '', status: 'Sick', notes: '' }; }
-function defaultDailyTarget() { return { date: todayISO(), targetActivity: 'Earthworks - Cut', targetLength: '', targetChainageFrom: '', targetChainageTo: '', notes: '' }; }
-function defaultSM() { return { name: '', type: 'Tipper Truck', regNumber: '', chassisNumber: '', serviceType: 'mileage', currentMileage: '', lastServiceMileage: '', nextServiceMileage: '', serviceIntervalKm: '6000', currentHours: '', lastServiceHours: '', nextServiceHours: '', serviceIntervalHours: '250', engineOilLitres: '', status: 'Active', notes: '' }; }
-function defaultSL() { return { machineId: '', machineName: '', date: todayISO(), currentMileage: '', mileageAdded: '', currentHours: '', hoursWorked: '', notes: '' }; }
+function defaultDailyTarget() { return { date: todayISO(), targetActivity: 'Cut to Spoil', targetLength: '', targetChainageFrom: '', targetChainageTo: '', notes: '' }; }
+function defaultSM() { return { name: '', type: 'Tipper Truck', regNumber: '', chassisNumber: '', serviceType: 'mileage', currentMileage: '', lastServiceMileage: '', nextServiceMileage: '', serviceIntervalKm: '6000', currentHours: '', lastServiceHours: '', nextServiceHours: '', serviceIntervalHours: '250', engineOilLitres: '', driverName: '', status: 'Active', notes: '' }; }
+function defaultSL() { return { machineId: '', machineName: '', date: todayISO(), currentMileage: '', mileageAdded: '', currentHours: '', hoursWorked: '', fuelLitres: '', driverName: '', notes: '' }; }
 function todayISO() { return new Date().toISOString().split('T')[0]; }
 
-// ================== STORAGE ==================
-function loadState() {
+// ================== ROLE HELPERS ==================
+function isAdmin()      { return currentUser?.role === 'admin'; }
+function isSupervisor() { return currentUser?.role === 'supervisor'; }
+function isForeman()    { return currentUser?.role === 'foreman'; }
+function isViewer()     { return currentUser?.role === 'viewer'; }
+function canWrite()     { return !isViewer(); }
+function canApprove()   { return isAdmin() || isSupervisor(); }
+function canManageUsers() { return isAdmin(); }
+
+// ================== API CALLS ==================
+async function apiCall(method, url, body) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    // Load ALL known keys automatically
-    ALL_DATA_KEYS.forEach(k => {
-      if (parsed[k] !== undefined) {
-        state[k] = parsed[k];
-      }
-    });
-  } catch (e) {
-    console.error('Load failed:', e);
-    alert('Could not load saved data: ' + e.message);
-  }
+    const opts = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const res = await fetch(url, opts);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  } catch(e) { throw e; }
 }
 
-function saveState() {
+// ================== STORAGE (API-based) ==================
+async function saveState(key) {
+  // If no key specified, this is a no-op (legacy calls)
+  // Actual saves happen via saveData(key, value)
+}
+
+async function saveData(key, value) {
+  state[key] = value;
+  if (isViewer()) return; // viewers cannot save
   try {
-    // Save ALL known keys automatically — never miss a new field
-    const data = {};
-    ALL_DATA_KEYS.forEach(k => {
-      if (state[k] !== undefined) data[k] = state[k];
-    });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch (e) {
-    if (e.name === 'QuotaExceededError') {
-      alert('Storage full! Browser limit reached.\n\n1. Click BACKUP to save your data\n2. Delete some old reports or photos\n3. Or use a different browser');
+    await apiCall('POST', `/api/data/${key}`, { value });
+    lastSyncTime = Date.now();
+    showFooterStatus('Saved ' + new Date().toLocaleTimeString());
+  } catch(e) {
+    if (e.message.includes('view-only')) {
+      showNotif('Your account is view-only — contact admin to make changes', 'error');
     } else {
-      console.error('Save failed:', e);
+      showNotif('Save error: ' + e.message, 'error');
     }
   }
 }
 
-function escapeHtml(str) {
+// Legacy saveState() calls — redirect to API save for the changed key
+// We override this so old code still works
+async function saveStateCompat() {
+  // bulk save all keys — used after import/restore
+  if (isViewer()) return;
+  try {
+    for (const k of ALL_DATA_KEYS) {
+      if (state[k] !== undefined) {
+        await apiCall('POST', `/api/data/${k}`, { value: state[k] });
+      }
+    }
+    lastSyncTime = Date.now();
+  } catch(e) { console.error('Bulk save error:', e); }
+}
+
+async function loadAllData() {
+  try {
+    const data = await apiCall('GET', '/api/data');
+    ALL_DATA_KEYS.forEach(k => {
+      if (data[k] !== undefined) state[k] = data[k];
+    });
+    lastSyncTime = Date.now();
+  } catch(e) {
+    showNotif('Could not load data: ' + e.message, 'error');
+  }
+}
+
+// Start polling for real-time updates from other users
+function startPolling() {
+  if (syncInterval) clearInterval(syncInterval);
+  syncInterval = setInterval(async () => {
+    try {
+      const r = await apiCall('GET', `/api/poll?since=${lastSyncTime}`);
+      if (r.hasUpdate && r.timestamp > lastSyncTime) {
+        lastSyncTime = r.timestamp;
+        await loadAllData();
+        render();
+        showNotif('🔄 Data updated by another user', 'info');
+      }
+    } catch(e) {}
+  }, 5000);
+}
+
+function showFooterStatus(msg) {
+  const el = document.getElementById('footerStatus');
+  if (el) el.textContent = msg;
+}
+
+// ================== AUTH ==================
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const pwd   = document.getElementById('loginPwd').value;
+  const errEl = document.getElementById('loginErr');
+  errEl.style.display = 'none';
+  if (!email || !pwd) { errEl.textContent = 'Email and password required'; errEl.style.display = 'block'; return; }
+  try {
+    const data = await apiCall('POST', '/api/login', { email, password: pwd });
+    currentUser = data.user;
+    await onLoggedIn();
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+async function onLoggedIn() {
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('appPage').style.display = 'block';
+
+  // Header badges
+  document.getElementById('userNameBadge').textContent = currentUser.name || currentUser.email;
+  const rb = document.getElementById('roleBadge');
+  rb.textContent = currentUser.role.toUpperCase();
+  const roleColors = { admin:'#f59e0b', supervisor:'#10b981', foreman:'#0ea5e9', viewer:'#78716c' };
+  rb.style.background = (roleColors[currentUser.role] || '#44403c') + '33';
+  rb.style.color = roleColors[currentUser.role] || '#a8a29e';
+  rb.style.border = `1px solid ${roleColors[currentUser.role] || '#44403c'}`;
+
+  // Show/hide restore button for non-admins
+  const restoreBtn = document.getElementById('restoreBtn');
+  if (restoreBtn) restoreBtn.style.display = isAdmin() ? '' : 'none';
+
+  // Load all project data
+  await loadAllData();
+  snapshotState(); // take snapshot so saveState() can detect changes
+
+  // Load users list if admin
+  if (isAdmin()) {
+    try { state.users = await apiCall('GET', '/api/users'); } catch(e) {}
+  }
+
+  render();
+  startPolling();
+}
+
+async function doLogout() {
+  if (syncInterval) clearInterval(syncInterval);
+  try { await apiCall('POST', '/api/logout'); } catch(e) {}
+  currentUser = null;
+  state.activeTab = 'overview';
+  document.getElementById('appPage').style.display = 'none';
+  document.getElementById('loginPage').style.display = 'flex';
+}
+
+// Check if already logged in (page refresh)
+(async () => {
+  try {
+    const user = await apiCall('GET', '/api/me');
+    if (user && user.email) { currentUser = user; await onLoggedIn(); return; }
+  } catch(e) {}
+  document.getElementById('loginPage').style.display = 'flex';
+})();
+
+// ================== BACKUP / RESTORE ==================
+async function exportAllData() {
+  try {
+    window.location.href = '/api/export';
+  } catch(e) { alert('Export failed: ' + e.message); }
+}
+
+async function importData(event) {
+  if (!isAdmin()) { showNotif('Only admin can restore data', 'error'); return; }
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async e => {
+    try {
+      const data = JSON.parse(e.target.result);
+
+      // Show summary of what will be restored
+      const found = [], missing = [];
+      ALL_DATA_KEYS.forEach(k => {
+        if (data[k] !== undefined) {
+          const count = Array.isArray(data[k]) ? data[k].length : 'saved';
+          found.push(`✅ ${k}: ${count}${typeof count === 'number' ? ' records' : ''}`);
+        } else {
+          missing.push(`⬜ ${k}: not in backup`);
+        }
+      });
+
+      const summary = `BACKUP FILE: ${file.name}\nDate: ${data._exportDate || data.exportDate || 'unknown'}\n\nFOUND:\n${found.join('\n')}\n\n${missing.length > 0 ? `NOT IN BACKUP (will stay empty):\n${missing.join('\n')}\n\n` : ''}Restore this backup? All current data will be replaced.`;
+
+      if (!confirm(summary)) { event.target.value = ''; return; }
+
+      // Send to server
+      const result = await apiCall('POST', '/api/import', data);
+
+      // Also update local state
+      ALL_DATA_KEYS.forEach(k => { if (data[k] !== undefined) state[k] = data[k]; });
+
+      render();
+      showNotif(`✓ Restored successfully! ${result.imported || ''} data sets loaded.`, 'success');
+    } catch(err) {
+      alert('Restore failed: ' + err.message + '\n\nMake sure you selected the correct .json backup file.');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// ================== SMART saveState for backwards compatibility ==================
+// The old code calls saveState() after modifying state.XXX directly.
+// This version detects which keys changed and saves them via API.
+let _lastStateSnapshot = {};
+
+async function saveState() {
+  if (isViewer()) return;
+  const changedKeys = [];
+  ALL_DATA_KEYS.forEach(k => {
+    const current = JSON.stringify(state[k]);
+    if (current !== _lastStateSnapshot[k]) {
+      changedKeys.push(k);
+      _lastStateSnapshot[k] = current;
+    }
+  });
+  if (changedKeys.length === 0) return;
+  // Save changed keys
+  for (const k of changedKeys) {
+    try {
+      await apiCall('POST', `/api/data/${k}`, { value: state[k] });
+    } catch(e) {
+      if (e.message && e.message.includes('view-only')) {
+        showNotif('View-only account — cannot save changes', 'error');
+        return;
+      }
+      console.error('Save error for key', k, e.message);
+    }
+  }
+  lastSyncTime = Date.now();
+  showFooterStatus('Saved ' + new Date().toLocaleTimeString());
+}
+
+function snapshotState() {
+  ALL_DATA_KEYS.forEach(k => { _lastStateSnapshot[k] = JSON.stringify(state[k]); });
+}
+
+
   if (str === null || str === undefined) return '';
   return String(str).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
-// ================== TABS ==================
-const TABS = [
-  { id: 'overview', label: 'OVERVIEW', icon: '▦' },
-  { id: 'daily', label: 'DAILY', icon: '▤' },
-  { id: 'weekly', label: 'WEEKLY', icon: '▥' },
-  { id: 'monthly', label: 'MONTHLY', icon: '▩' },
-  { id: 'targets', label: 'TARGETS PROGRESS', icon: '🎯' },
-  { id: 'gantt', label: 'GANTT', icon: '▬' },
-  { id: 'boq', label: 'BOQ', icon: '▢' },
-  { id: 'completions', label: 'TASK COMPLETIONS', icon: '✓' },
-  { id: 'service', label: 'SERVICE TRACKER', icon: '🔧' },
-  { id: 'team', label: 'TEAM', icon: '👥' },
-  { id: 'sickness', label: 'SICKNESS LOG', icon: '🏥' },
-  { id: 'files', label: 'FILES', icon: '🗂' },
-  { id: 'equipment', label: 'EQUIPMENT', icon: '⬚' },
-  { id: 'issues', label: 'ISSUES', icon: '⚠' },
-  { id: 'settings', label: 'PROJECT SETUP', icon: '⚙' }
+// ================== TABS (role-based visibility) ==================
+const ALL_TABS = [
+  { id: 'overview',     label: 'OVERVIEW',         icon: '▦', roles: ['admin','supervisor','foreman','viewer'] },
+  { id: 'daily',        label: 'DAILY',             icon: '▤', roles: ['admin','supervisor','foreman','viewer'] },
+  { id: 'weekly',       label: 'WEEKLY',            icon: '▥', roles: ['admin','supervisor','foreman','viewer'] },
+  { id: 'monthly',      label: 'MONTHLY',           icon: '▩', roles: ['admin','supervisor','viewer'] },
+  { id: 'targets',      label: 'TARGETS',           icon: '🎯', roles: ['admin','supervisor','foreman','viewer'] },
+  { id: 'gantt',        label: 'GANTT',             icon: '▬', roles: ['admin','supervisor','foreman','viewer'] },
+  { id: 'boq',          label: 'BOQ',               icon: '▢', roles: ['admin','supervisor','viewer'] },
+  { id: 'completions',  label: 'COMPLETIONS',       icon: '✓', roles: ['admin','supervisor','foreman','viewer'] },
+  { id: 'service',      label: 'SERVICE TRACKER',   icon: '🔧', roles: ['admin','supervisor','foreman','viewer'] },
+  { id: 'team',         label: 'TEAM',              icon: '👥', roles: ['admin','supervisor'] },
+  { id: 'sickness',     label: 'SICKNESS LOG',      icon: '🏥', roles: ['admin','supervisor'] },
+  { id: 'files',        label: 'FILES',             icon: '🗂', roles: ['admin','supervisor','foreman','viewer'] },
+  { id: 'equipment',    label: 'EQUIPMENT',         icon: '⬚', roles: ['admin','supervisor','viewer'] },
+  { id: 'issues',       label: 'ISSUES',            icon: '⚠', roles: ['admin','supervisor','foreman','viewer'] },
+  { id: 'users',        label: 'USERS',             icon: '🔑', roles: ['admin'] },
+  { id: 'settings',     label: 'PROJECT SETUP',     icon: '⚙', roles: ['admin'] },
 ];
 
+// Keep TABS as the visible tabs for current user
+let TABS = ALL_TABS;
+
+function getVisibleTabs() {
+  if (!currentUser) return ALL_TABS;
+  return ALL_TABS.filter(t => t.roles.includes(currentUser.role));
+}
+
 function renderTabs() {
-  const html = TABS.map(t => `<button class="tab ${state.activeTab === t.id ? 'active' : ''}" onclick="setTab('${t.id}')"><span>${t.icon}</span>${t.label}</button>`).join('');
+  const visible = getVisibleTabs();
+  const html = visible.map(t =>
+    `<button class="tab ${state.activeTab === t.id ? 'active' : ''}" onclick="setTab('${t.id}')">
+      <span>${t.icon}</span>${t.label}
+    </button>`
+  ).join('');
   document.getElementById('tabsContainer').innerHTML = html;
 }
 
 function setTab(id) {
+  // Check tab is allowed for this role
+  const tab = ALL_TABS.find(t => t.id === id);
+  if (tab && currentUser && !tab.roles.includes(currentUser.role)) {
+    showNotif('You do not have access to this section', 'error');
+    return;
+  }
   state.activeTab = id;
-  // Reset folder navigation when leaving files tab
   if (id !== 'files') state.currentFolderId = null;
   render();
   window.scrollTo(0, 0);
@@ -396,23 +668,30 @@ function render() {
   document.getElementById('brandTitle').textContent = state.projectInfo.name || 'ROAD CONSTRUCTION DASHBOARD';
   renderTabs();
   const main = document.getElementById('mainContent');
+  let pageContent = '';
   switch (state.activeTab) {
-    case 'overview': main.innerHTML = renderOverview(); break;
-    case 'daily': main.innerHTML = renderDaily(); break;
-    case 'weekly': main.innerHTML = renderWeekly(); break;
-    case 'monthly': main.innerHTML = renderMonthly(); break;
-    case 'targets': main.innerHTML = renderTargets(); break;
-    case 'gantt': main.innerHTML = renderGantt(); break;
-    case 'boq': main.innerHTML = renderBOQ(); break;
-    case 'completions': main.innerHTML = renderCompletions(); break;
-    case 'service': main.innerHTML = renderService(); break;
-    case 'team': main.innerHTML = renderTeam(); break;
-    case 'sickness': main.innerHTML = renderSickness(); break;
-    case 'files': main.innerHTML = renderFiles(); break;
-    case 'equipment': main.innerHTML = renderEquipment(); break;
-    case 'issues': main.innerHTML = renderIssues(); break;
-    case 'settings': main.innerHTML = renderSettings(); break;
+    case 'overview': pageContent = renderOverview(); break;
+    case 'daily': pageContent = renderDaily(); break;
+    case 'weekly': pageContent = renderWeekly(); break;
+    case 'monthly': pageContent = renderMonthly(); break;
+    case 'targets': pageContent = renderTargets(); break;
+    case 'gantt': pageContent = renderGantt(); break;
+    case 'boq': pageContent = renderBOQ(); break;
+    case 'completions': pageContent = renderCompletions(); break;
+    case 'service': pageContent = renderService(); break;
+    case 'team': pageContent = renderTeam(); break;
+    case 'sickness': pageContent = renderSickness(); break;
+    case 'files': pageContent = renderFiles(); break;
+    case 'equipment': pageContent = renderEquipment(); break;
+    case 'issues': pageContent = renderIssues(); break;
+    case 'settings': pageContent = renderSettings(); break;
+    case 'users': pageContent = isAdmin() ? renderUsersTab() : '<div style="padding:40px;text-align:center;color:#78716c">Admin access required.</div>'; break;
   }
+  // Prepend viewer banner if applicable
+  const viewerBanner = isViewer()
+    ? `<div class="viewer-banner">👁 VIEW-ONLY MODE — You can see all data but cannot add or edit. Contact your administrator to change your access level.</div>`
+    : '';
+  main.innerHTML = viewerBanner + pageContent;
 }
 
 // ============ AUTO-CALCULATIONS ============
@@ -587,20 +866,38 @@ function renderDaily() {
 }
 
 function getActivityList() {
-  // NOTE: Names here match BOQ_WORK_ITEMS exactly so DPR auto-updates BOQ
+  // NOTE: Names match BOQ_WORK_ITEMS descriptions exactly — DPR auto-updates Team B BOQ
   const defaults = [
+    // Clearing
     'Clearing and Grubbing',
-    'Removal of Top Soil',
-    'Road Formation Preparation',
-    'Diversion Formation',
-    'Layby Preparation',
+    'Treatment of Anthill',
+    'Anthill Excavation',
+    'Girth 1m-2m',
+    'Girth 2m and Above',
+    // Earthworks
     'Cut to Spoil',
+    'Cut to Spoil Top Soil',
+    'Soft Material Excavation',
+    'Intermediate Material Excavation',
+    'Excavation by Blasting',
+    'Overhaul of Material from Borrow Pit',
+    'Rockfill 250mm-500mm',
     'Roadbed',
     'Fill',
+    // Subgrade
     'Subgrade',
     'Improved Subgrade',
+    // Sub-base
     'Sub-base 1',
     'Sub-base 2',
+    // Diversion
+    'Watering Diversion',
+    'Blading of Diversion and Existing Road',
+    'Cut to Spoil Diversions',
+    'Cut and Borrow for Diversion',
+    'Shaping Diversion 7m Wide',
+    'Maintaining Diversion',
+    // Other works
     'Bituminous Prime Coat',
     'Bituminous Tack Coat',
     'Asphalt Binder Course',
@@ -768,46 +1065,91 @@ function saveDaily() {
   }
 
   // ---- AUTO-UPDATE BOQ (TEAM B ONLY) ----
-  // Calculate volume from chainage + width + thickness
   const dims = calcDimensions(f.chainageFrom, f.chainageTo, f.width, f.thickness);
-
-  // Priority: Volume (m³) → Area (m²) → Distance (m)
-  // Use the most complete measurement available
   const volumeWorked = dims.volume || 0;
   const areaWorked   = dims.area   || 0;
   const distWorked   = dims.length || 0;
 
-  // Determine which quantity to send to BOQ
-  const qtyToAdd  = volumeWorked > 0 ? volumeWorked : (areaWorked > 0 ? areaWorked : distWorked);
-  const qtyLabel  = volumeWorked > 0 ? 'Volume' : (areaWorked > 0 ? 'Area' : 'Distance');
-  const qtyUnit   = volumeWorked > 0 ? 'm³' : (areaWorked > 0 ? 'm²' : 'm');
+  // Find matching BOQ items in Team B
+  const matchingBOQ = (state.workItems || []).filter(i =>
+    i.team === 'B' &&
+    i.description && f.activity &&
+    i.description.toLowerCase() === f.activity.toLowerCase()
+  );
 
-  if (qtyToAdd > 0) {
-    const matchingBOQ = (state.workItems || []).filter(i =>
-      i.team === 'B' &&
-      i.description && f.activity &&
-      i.description.toLowerCase() === f.activity.toLowerCase()
+  if (matchingBOQ.length > 0) {
+    // Get the BOQ_WORK_ITEMS definition for this activity
+    const boqDef = BOQ_WORK_ITEMS.find(w =>
+      w.description.toLowerCase() === f.activity.toLowerCase()
     );
 
-    if (matchingBOQ.length > 0) {
-      matchingBOQ.forEach(boqItem => {
-        // If editing — reverse old quantity first
-        if (isEdit && oldReport) {
-          const oldDims = calcDimensions(oldReport.chainageFrom, oldReport.chainageTo, oldReport.width, oldReport.thickness);
-          const oldQty = oldDims.volume > 0 ? oldDims.volume : (oldDims.area > 0 ? oldDims.area : (oldDims.length || 0));
-          if (oldReport.activity && oldReport.activity.toLowerCase() === boqItem.description.toLowerCase()) {
-            const current = parseFloat(boqItem.completedQty) || 0;
-            boqItem.completedQty = Math.max(0, current - oldQty).toFixed(3);
-          }
-        }
-        // Add new quantity
-        const current = parseFloat(boqItem.completedQty) || 0;
-        boqItem.completedQty = (current + qtyToAdd).toFixed(3);
-      });
+    matchingBOQ.forEach(boqItem => {
+      // Determine quantity to add based on BOQ item unit
+      let qtyToAdd = 0;
+      let qtyLabel = 'Value';
+      let qtyUnit  = boqItem.unit || 'm';
 
-      const itemNames = matchingBOQ.map(i => `Team B: ${i.description}`).join(', ');
-      setTimeout(() => showBOQUpdateNotice(f.activity, qtyToAdd, qtyLabel, qtyUnit, itemNames), 100);
-    }
+      if (boqItem.unit === 'ha' || (boqDef && boqDef.convertToHa)) {
+        // Convert m² to hectares (1 ha = 10,000 m²)
+        const area = areaWorked > 0 ? areaWorked : (distWorked * (parseFloat(f.width)||1));
+        qtyToAdd = area / 10000;
+        qtyLabel = 'Area (converted to ha)';
+        qtyUnit  = 'ha';
+      } else if (boqItem.unit === 'm³') {
+        qtyToAdd = volumeWorked > 0 ? volumeWorked : (areaWorked > 0 ? areaWorked : distWorked);
+        qtyLabel = volumeWorked > 0 ? 'Volume' : (areaWorked > 0 ? 'Area' : 'Distance');
+        qtyUnit  = boqItem.unit;
+      } else if (boqItem.unit === 'm²') {
+        qtyToAdd = areaWorked > 0 ? areaWorked : distWorked;
+        qtyLabel = areaWorked > 0 ? 'Area' : 'Distance';
+        qtyUnit  = boqItem.unit;
+      } else if (boqItem.unit === 'km') {
+        qtyToAdd = distWorked / 1000;
+        qtyLabel = 'Distance';
+        qtyUnit  = 'km';
+      } else if (boqItem.unit === 'kl') {
+        qtyToAdd = parseFloat(f.quantityAchieved) || 0;
+        qtyLabel = 'Quantity';
+        qtyUnit  = 'kl';
+      } else if (boqItem.unit === 'tree' || boqItem.unit === 'nos') {
+        qtyToAdd = parseFloat(f.quantityAchieved) || 0;
+        qtyLabel = 'Count';
+        qtyUnit  = boqItem.unit;
+      } else {
+        qtyToAdd = volumeWorked > 0 ? volumeWorked : (areaWorked > 0 ? areaWorked : distWorked);
+        qtyLabel = 'Quantity';
+        qtyUnit  = boqItem.unit;
+      }
+
+      if (qtyToAdd <= 0) return;
+
+      // If editing — reverse old quantity first
+      if (isEdit && oldReport) {
+        const oldDims = calcDimensions(oldReport.chainageFrom, oldReport.chainageTo, oldReport.width, oldReport.thickness);
+        if (oldReport.activity && oldReport.activity.toLowerCase() === boqItem.description.toLowerCase()) {
+          let oldQty = 0;
+          if (boqItem.unit === 'ha') {
+            const oldArea = (oldDims.area||0) > 0 ? oldDims.area : ((oldDims.length||0) * (parseFloat(oldReport.width)||1));
+            oldQty = oldArea / 10000;
+          } else if (boqItem.unit === 'm³') {
+            oldQty = (oldDims.volume||0) > 0 ? oldDims.volume : ((oldDims.area||0) > 0 ? oldDims.area : (oldDims.length||0));
+          } else if (boqItem.unit === 'm²') {
+            oldQty = (oldDims.area||0) > 0 ? oldDims.area : (oldDims.length||0);
+          } else if (boqItem.unit === 'km') {
+            oldQty = (oldDims.length||0) / 1000;
+          } else {
+            oldQty = parseFloat(oldReport.quantityAchieved) || 0;
+          }
+          const current = parseFloat(boqItem.completedQty) || 0;
+          boqItem.completedQty = Math.max(0, current - oldQty).toFixed(4);
+        }
+      }
+
+      // Add new quantity
+      const current = parseFloat(boqItem.completedQty) || 0;
+      boqItem.completedQty = (current + qtyToAdd).toFixed(4);
+      setTimeout(() => showBOQUpdateNotice(f.activity, qtyToAdd, qtyLabel, qtyUnit, `Team B: ${boqItem.description}`), 100);
+    });
   }
   // ---- END AUTO-UPDATE BOQ ----
 
@@ -1388,14 +1730,32 @@ function formatBytes(bytes) {
 // ============ BOQ ============
 // Standard work items — matches DPR activity names exactly for auto-update
 const BOQ_WORK_ITEMS = [
-  { code: '101', description: 'Clearing and Grubbing',   unit: 'ha'  },
-  { code: '201', description: 'Cut to Spoil',            unit: 'm³'  },
-  { code: '202', description: 'Roadbed',                 unit: 'm²'  },
-  { code: '203', description: 'Fill',                    unit: 'm³'  },
-  { code: '301', description: 'Subgrade',                unit: 'm²'  },
-  { code: '302', description: 'Improved Subgrade',       unit: 'm²'  },
-  { code: '401', description: 'Sub-base 1',              unit: 'm³'  },
-  { code: '402', description: 'Sub-base 2',              unit: 'm³'  },
+  // Original road construction items
+  { code: '101',  description: 'Clearing and Grubbing',              unit: 'ha',   defaultRate: 1680,   dprUnit: 'm²', convertToHa: true  },
+  { code: '102',  description: 'Treatment of Anthill',               unit: 'm²',   defaultRate: 1.2,    dprUnit: 'm²', convertToHa: false },
+  { code: '103',  description: 'Anthill Excavation',                 unit: 'm³',   defaultRate: 2.6,    dprUnit: 'm³', convertToHa: false },
+  { code: '104',  description: 'Girth 1m-2m',                       unit: 'tree', defaultRate: 12.40,  dprUnit: 'nos', convertToHa: false },
+  { code: '105',  description: 'Girth 2m and Above',                unit: 'tree', defaultRate: 24.70,  dprUnit: 'nos', convertToHa: false },
+  { code: '201',  description: 'Cut to Spoil',                       unit: 'm³',   defaultRate: 0,      dprUnit: 'm³', convertToHa: false },
+  { code: '202',  description: 'Cut to Spoil Top Soil',              unit: 'm³',   defaultRate: 0.9,    dprUnit: 'm³', convertToHa: false },
+  { code: '203',  description: 'Soft Material Excavation',           unit: 'm³',   defaultRate: 3.3,    dprUnit: 'm³', convertToHa: false },
+  { code: '204',  description: 'Intermediate Material Excavation',   unit: 'm³',   defaultRate: 4.5,    dprUnit: 'm³', convertToHa: false },
+  { code: '205',  description: 'Excavation by Blasting',             unit: 'm³',   defaultRate: 95,     dprUnit: 'm³', convertToHa: false },
+  { code: '206',  description: 'Overhaul of Material from Borrow Pit', unit: 'km', defaultRate: 0.03,   dprUnit: 'km', convertToHa: false },
+  { code: '207',  description: 'Rockfill 250mm-500mm',               unit: 'm³',   defaultRate: 20.2,   dprUnit: 'm³', convertToHa: false },
+  { code: '208',  description: 'Roadbed',                            unit: 'm²',   defaultRate: 0,      dprUnit: 'm²', convertToHa: false },
+  { code: '209',  description: 'Fill',                               unit: 'm³',   defaultRate: 0,      dprUnit: 'm³', convertToHa: false },
+  { code: '301',  description: 'Subgrade',                           unit: 'm²',   defaultRate: 0,      dprUnit: 'm²', convertToHa: false },
+  { code: '302',  description: 'Improved Subgrade',                  unit: 'm²',   defaultRate: 0,      dprUnit: 'm²', convertToHa: false },
+  { code: '401',  description: 'Sub-base 1',                         unit: 'm³',   defaultRate: 0,      dprUnit: 'm³', convertToHa: false },
+  { code: '402',  description: 'Sub-base 2',                         unit: 'm³',   defaultRate: 0,      dprUnit: 'm³', convertToHa: false },
+  // Diversion works
+  { code: '501',  description: 'Watering Diversion',                 unit: 'kl',   defaultRate: 3.4,    dprUnit: 'kl', convertToHa: false },
+  { code: '502',  description: 'Blading of Diversion and Existing Road', unit: 'km', defaultRate: 104.2, dprUnit: 'km', convertToHa: false },
+  { code: '503',  description: 'Cut to Spoil Diversions',            unit: 'm³',   defaultRate: 2.1,    dprUnit: 'm³', convertToHa: false },
+  { code: '504',  description: 'Cut and Borrow for Diversion',       unit: 'm³',   defaultRate: 4.0,    dprUnit: 'm³', convertToHa: false },
+  { code: '505',  description: 'Shaping Diversion 7m Wide',          unit: 'km',   defaultRate: 15,     dprUnit: 'km', convertToHa: false },
+  { code: '506',  description: 'Maintaining Diversion',              unit: 'km',   defaultRate: 1599.40, dprUnit: 'km', convertToHa: false },
 ];
 
 function getTeamItems(team) {
@@ -1428,6 +1788,8 @@ function renderBOQ() {
         <button class="btn" onclick="initTeamBOQ('A')" title="Auto-create all work items for Team A">⚡ INIT TEAM A</button>
         <button class="btn" onclick="initTeamBOQ('B')" title="Auto-create all work items for Team B">⚡ INIT TEAM B</button>
         <button class="btn btn-primary" onclick="newItem()">＋ CUSTOM ITEM</button>
+        <button class="btn" onclick="exportBOQ('pdf')">📄 EXPORT PDF</button>
+        <button class="btn" onclick="exportBOQ('jpg')">🖼 EXPORT JPG</button>
       </div>
     </div>
 
@@ -1609,29 +1971,25 @@ function newItemForTeam(team) {
 }
 
 function initTeamBOQ(team) {
-  if (!confirm(`Auto-create all ${BOQ_WORK_ITEMS.length} standard work items for Team ${team}?\n\nThis adds:\n${BOQ_WORK_ITEMS.map(w => '• ' + w.description + ' (' + w.unit + ')').join('\n')}\n\nYou can then fill in the quantities and rates.`)) return;
   const existing = getTeamItems(team).map(i => i.description);
-  let added = 0;
-  BOQ_WORK_ITEMS.forEach(w => {
-    if (!existing.includes(w.description)) {
-      state.workItems.push({
-        id: Date.now() + Math.random(),
-        team,
-        itemCode: w.code,
-        description: w.description,
-        unit: w.unit,
-        plannedQty: '',
-        completedQty: '0',
-        rate: '',
-        notes: ''
-      });
-      added++;
-    }
+  const toAdd = BOQ_WORK_ITEMS.filter(w => !existing.includes(w.description));
+  if (toAdd.length === 0) { alert(`All standard work items already exist for Team ${team}.`); return; }
+  if (!confirm(`Auto-create ${toAdd.length} standard work items for Team ${team}?\n\n${toAdd.map(w => `• ${w.code} ${w.description} (${w.unit}) @ ${w.defaultRate > 0 ? w.defaultRate : 'rate TBD'}`).join('\n')}\n\nRates are pre-filled but editable.`)) return;
+  toAdd.forEach(w => {
+    state.workItems.push({
+      id: Date.now() + Math.random(),
+      team,
+      itemCode: w.code,
+      description: w.description,
+      unit: w.unit,
+      plannedQty: '',
+      completedQty: '0',
+      rate: w.defaultRate > 0 ? String(w.defaultRate) : '',
+      notes: ''
+    });
   });
-  saveState();
-  render();
-  if (added === 0) alert(`All standard work items already exist for Team ${team}.`);
-  else alert(`✓ ${added} work item(s) created for Team ${team}. Now enter the quantities and rates.`);
+  saveState(); render();
+  alert(`✓ ${toAdd.length} work items created for Team ${team}.\n\nRates are pre-filled — you can edit them in the BOQ table.\nNow enter the planned quantities for each item.`);
 }
 
 function editItem(id) {
@@ -3030,7 +3388,7 @@ function renderService() {
         ${(state.serviceLog || []).length === 0
           ? '<div style="text-align:center;padding:24px;color:#78716c;font-size:13px">No readings logged yet. Click LOG DAILY READING to add hours/mileage.</div>'
           : `<div class="table-wrap"><table>
-              <thead><tr><th>DATE</th><th>MACHINE</th><th>HRS WORKED</th><th>KM ADDED</th><th>CURRENT HRS</th><th>CURRENT KM</th><th>NOTES</th><th></th></tr></thead>
+              <thead><tr><th>DATE</th><th>MACHINE</th><th>HRS WORKED</th><th>KM ADDED</th><th>CURRENT HRS</th><th>CURRENT KM</th><th>FUEL (L)</th><th>DRIVER</th><th>NOTES</th><th></th></tr></thead>
               <tbody>${[...(state.serviceLog || [])].reverse().slice(0, 30).map(l => `<tr>
                 <td class="amber">${escapeHtml(l.date)}</td>
                 <td style="font-weight:bold">${escapeHtml(l.machineName)}</td>
@@ -3038,6 +3396,8 @@ function renderService() {
                 <td>${l.mileageAdded ? escapeHtml(l.mileageAdded) + ' km' : '—'}</td>
                 <td style="color:#38bdf8">${l.currentHours ? escapeHtml(l.currentHours) + ' hrs' : '—'}</td>
                 <td style="color:#38bdf8">${l.currentMileage ? escapeHtml(l.currentMileage) + ' km' : '—'}</td>
+                <td style="color:#34d399">${l.fuelLitres ? escapeHtml(l.fuelLitres) + ' L' : '—'}</td>
+                <td style="color:#e7e5e4">${escapeHtml(l.driverName) || '—'}</td>
                 <td style="color:#a8a29e;font-size:11px">${escapeHtml(l.notes) || '—'}</td>
                 <td><button class="icon-btn danger" onclick="deleteSL(${l.id})">🗑</button></td>
               </tr>`).join('')}</tbody>
@@ -3064,6 +3424,8 @@ function renderMCard(m) {
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <span style="background:${color};color:#0c0a09;padding:3px 10px;font-size:11px;font-weight:bold;letter-spacing:0.1em">${label}</span>
           <button class="btn btn-sm btn-primary" onclick="quickLogSL(${m.id})">＋ LOG TODAY</button>
+          <button class="btn btn-sm" onclick="exportMachineCard(${m.id},'pdf')">📄 PDF</button>
+          <button class="btn btn-sm" onclick="exportMachineCard(${m.id},'jpg')">🖼 JPG</button>
           <button class="icon-btn amber" onclick="editSM(${m.id})">✎</button>
           <button class="icon-btn danger" onclick="deleteSM(${m.id})">🗑</button>
         </div>
@@ -3093,7 +3455,9 @@ function renderMCard(m) {
           ${s.daysByH !== null ? `<div><div class="data-label">EST. DAYS (HRS)</div><div class="data-value">${s.daysByH} days</div></div>` : ''}
         ` : ''}
         ${m.engineOilLitres ? `<div><div class="data-label">ENGINE OIL / SERVICE</div><div class="data-value">${escapeHtml(m.engineOilLitres)} L</div></div>` : ''}
+        ${m.driverName ? `<div><div class="data-label">DRIVER / OPERATOR</div><div class="data-value" style="color:#34d399">${escapeHtml(m.driverName)}</div></div>` : ''}
         ${lastLog ? `<div><div class="data-label">LAST READING DATE</div><div class="data-value">${escapeHtml(lastLog.date)}</div></div>` : ''}
+        ${lastLog && lastLog.fuelLitres ? `<div><div class="data-label">LAST FUEL FILL</div><div class="data-value" style="color:#34d399">${escapeHtml(lastLog.fuelLitres)} L</div></div>` : ''}
       </div>
 
       ${(m.serviceType === 'mileage' || m.serviceType === 'both') && m.lastServiceMileage && m.nextServiceMileage ? (() => {
@@ -3148,6 +3512,7 @@ function renderSMForm() {
         ${fInput('CHASSIS NUMBER','smForm','chassisNumber',f.chassisNumber,'text','e.g. LZGJLDR4XRX094037')}
         ${fSelect('TRACK SERVICE BY','smForm','serviceType',f.serviceType,['mileage','hours','both'])}
         ${fInput('ENGINE OIL PER SERVICE (litres)','smForm','engineOilLitres',f.engineOilLitres,'number','e.g. 25')}
+        ${fInput('ASSIGNED DRIVER / OPERATOR','smForm','driverName',f.driverName,'text','e.g. John Mwansa')}
         ${fSelect('STATUS','smForm','status',f.status,['Active','Under Repair','Off Site','Decommissioned'])}
         ${f.serviceType === 'mileage' || f.serviceType === 'both' ? `
           <div class="full" style="background:#1c1917;border-left:3px solid #0ea5e9;padding:12px">
@@ -3275,6 +3640,13 @@ function renderSLForm() {
             </div>` : ''}
 
           <div class="full">${fTextarea('NOTES','slForm','notes',f.notes,'e.g. Machine working well, oil noticed, etc.')}</div>
+          <div class="full" style="background:#1c1917;border-left:3px solid #10b981;padding:12px">
+            <div style="font-size:11px;color:#34d399;margin-bottom:8px;font-weight:bold">⛽ FUEL & DRIVER LOG</div>
+            <div class="form-grid">
+              ${fInput('FUEL FILLED TODAY (litres)','slForm','fuelLitres',f.fuelLitres,'number','e.g. 120')}
+              ${fInput('DRIVER / OPERATOR NAME','slForm','driverName',f.driverName,'text','e.g. John Mwansa')}
+            </div>
+          </div>
         </div>
       ` : `<div style="text-align:center;padding:20px;color:#78716c;font-size:12px;border:1px dashed #44403c">← Select a machine above to enter today's reading</div>`}
 
@@ -3369,6 +3741,392 @@ function deleteSL(id) {
   if (!confirm('Delete this reading?')) return;
   state.serviceLog = (state.serviceLog || []).filter(x => x.id !== id);
   saveState(); render();
+}
+
+// ============ MACHINE CARD EXPORT ============
+async function exportMachineCard(machineId, format) {
+  const m = (state.serviceMachines || []).find(x => x.id === machineId);
+  if (!m) return;
+  const s = calcSvcStatus(m);
+  const color = svcColor(s).replace('#','');
+  const label = svcLabel(s);
+  const logs = [...(state.serviceLog || [])].filter(l => l.machineId === m.id).reverse().slice(0, 15);
+  const totalFuel = (state.serviceLog || []).filter(l => l.machineId === m.id).reduce((s,l) => s + (parseFloat(l.fuelLitres)||0), 0);
+  const p = state.projectInfo;
+
+  const container = document.getElementById('dprPrintContainer');
+  container.innerHTML = `
+    <div id="machPrint" style="background:white;color:#111;padding:24px;font-family:Arial,sans-serif;max-width:700px">
+      <div style="border-bottom:3px solid #f59e0b;padding-bottom:8px;margin-bottom:12px">
+        <div style="font-size:16px;font-weight:bold">SERVICE TRACKER — MACHINE REPORT</div>
+        <div style="font-size:11px;color:#555;margin-top:2px">${escapeHtml(p.name)} · ${new Date().toLocaleDateString()}</div>
+      </div>
+
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:14px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+          <div>
+            <div style="font-size:16px;font-weight:bold">${escapeHtml(m.name)}</div>
+            <div style="font-size:12px;color:#555">${escapeHtml(m.type)} ${m.regNumber ? '· '+escapeHtml(m.regNumber) : ''} ${m.chassisNumber ? '· '+escapeHtml(m.chassisNumber) : ''}</div>
+            ${m.driverName ? `<div style="font-size:12px;color:#059669;margin-top:2px">Driver: <strong>${escapeHtml(m.driverName)}</strong></div>` : ''}
+          </div>
+          <div style="background:#${color}22;border:2px solid #${color};padding:6px 14px;font-weight:bold;font-size:13px;color:#${color === '10b981' ? '059669' : color === 'f59e0b' ? 'b45309' : 'dc2626'}">${label}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:11px">
+          ${m.serviceType==='mileage'||m.serviceType==='both' ? `
+            <div style="background:white;border:1px solid #e5e7eb;padding:8px">
+              <div style="color:#888;font-size:10px">CURRENT KM</div><div style="font-weight:bold;font-size:14px">${escapeHtml(m.currentMileage)||'0'} km</div>
+            </div>
+            <div style="background:white;border:1px solid #e5e7eb;padding:8px">
+              <div style="color:#888;font-size:10px">NEXT SERVICE</div><div style="font-weight:bold;font-size:14px">${escapeHtml(m.nextServiceMileage)||'—'} km</div>
+            </div>
+            <div style="background:white;border:1px solid #e5e7eb;padding:8px">
+              <div style="color:#888;font-size:10px">KM REMAINING</div>
+              <div style="font-weight:bold;font-size:14px;color:${s.kmOverdue?'#dc2626':s.kmUrgent?'#d97706':'#059669'}">
+                ${s.kmRem !== null ? Math.abs(s.kmRem).toLocaleString()+' km' : '—'}
+              </div>
+            </div>` : ''}
+          ${m.serviceType==='hours'||m.serviceType==='both' ? `
+            <div style="background:white;border:1px solid #e5e7eb;padding:8px">
+              <div style="color:#888;font-size:10px">CURRENT HOURS</div><div style="font-weight:bold;font-size:14px">${escapeHtml(m.currentHours)||'0'} hrs</div>
+            </div>
+            <div style="background:white;border:1px solid #e5e7eb;padding:8px">
+              <div style="color:#888;font-size:10px">NEXT SERVICE</div><div style="font-weight:bold;font-size:14px">${escapeHtml(m.nextServiceHours)||'—'} hrs</div>
+            </div>
+            <div style="background:white;border:1px solid #e5e7eb;padding:8px">
+              <div style="color:#888;font-size:10px">HRS REMAINING</div>
+              <div style="font-weight:bold;font-size:14px;color:${s.hOverdue?'#dc2626':s.hUrgent?'#d97706':'#059669'}">
+                ${s.hRem !== null ? Math.abs(s.hRem).toFixed(1)+' hrs' : '—'}
+              </div>
+            </div>` : ''}
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;padding:8px">
+            <div style="color:#888;font-size:10px">TOTAL FUEL FILLED</div><div style="font-weight:bold;font-size:14px;color:#059669">${totalFuel.toLocaleString()} L</div>
+          </div>
+          ${m.engineOilLitres ? `<div style="background:white;border:1px solid #e5e7eb;padding:8px"><div style="color:#888;font-size:10px">OIL PER SERVICE</div><div style="font-weight:bold;font-size:14px">${escapeHtml(m.engineOilLitres)} L</div></div>` : ''}
+        </div>
+      </div>
+
+      ${logs.length > 0 ? `
+        <div style="font-size:11px;font-weight:bold;color:#555;margin-bottom:6px;letter-spacing:0.05em">RECENT DAILY READINGS (last ${logs.length})</div>
+        <table style="width:100%;border-collapse:collapse;font-size:10px">
+          <thead><tr style="background:#f3f4f6">
+            <th style="border:1px solid #e5e7eb;padding:5px">Date</th>
+            <th style="border:1px solid #e5e7eb;padding:5px">Driver</th>
+            <th style="border:1px solid #e5e7eb;padding:5px">Current KM</th>
+            <th style="border:1px solid #e5e7eb;padding:5px">KM Today</th>
+            <th style="border:1px solid #e5e7eb;padding:5px">Current Hrs</th>
+            <th style="border:1px solid #e5e7eb;padding:5px">Hrs Today</th>
+            <th style="border:1px solid #e5e7eb;padding:5px;color:#059669">Fuel (L)</th>
+            <th style="border:1px solid #e5e7eb;padding:5px">Notes</th>
+          </tr></thead>
+          <tbody>
+            ${logs.map((l,i) => `<tr style="background:${i%2===0?'white':'#f9fafb'}">
+              <td style="border:1px solid #e5e7eb;padding:4px 5px">${escapeHtml(l.date)}</td>
+              <td style="border:1px solid #e5e7eb;padding:4px 5px">${escapeHtml(l.driverName)||'—'}</td>
+              <td style="border:1px solid #e5e7eb;padding:4px 5px;text-align:right">${l.currentMileage?escapeHtml(l.currentMileage)+' km':'—'}</td>
+              <td style="border:1px solid #e5e7eb;padding:4px 5px;text-align:right">${l.mileageAdded?escapeHtml(l.mileageAdded)+' km':'—'}</td>
+              <td style="border:1px solid #e5e7eb;padding:4px 5px;text-align:right">${l.currentHours?escapeHtml(l.currentHours)+' hrs':'—'}</td>
+              <td style="border:1px solid #e5e7eb;padding:4px 5px;text-align:right">${l.hoursWorked?escapeHtml(l.hoursWorked)+' hrs':'—'}</td>
+              <td style="border:1px solid #e5e7eb;padding:4px 5px;text-align:right;color:#059669;font-weight:bold">${l.fuelLitres?escapeHtml(l.fuelLitres)+' L':'—'}</td>
+              <td style="border:1px solid #e5e7eb;padding:4px 5px;color:#777">${escapeHtml(l.notes)||'—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>` : '<div style="text-align:center;padding:14px;color:#888;font-size:12px">No readings logged yet.</div>'}
+
+      <div style="display:flex;justify-content:space-between;margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:10px;color:#555">
+        <div style="text-align:center;width:150px"><div style="margin-top:24px;padding-top:4px;border-top:1px solid #aaa">DRIVER SIGNATURE</div></div>
+        <div style="text-align:center;width:150px"><div style="margin-top:24px;padding-top:4px;border-top:1px solid #aaa">SUPERVISOR</div></div>
+        <div style="text-align:center;width:150px"><div style="margin-top:24px;padding-top:4px;border-top:1px solid #aaa">ENGINEER</div></div>
+      </div>
+    </div>`;
+
+  const el = document.getElementById('machPrint');
+  const fname = `Service-${escapeHtml(m.name).replace(/\s+/g,'-')}-${new Date().toISOString().split('T')[0]}`;
+  try {
+    const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff' });
+    if (format === 'jpg') {
+      canvas.toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = fname+'.jpg'; a.click(); }, 'image/jpeg', 0.95);
+    } else {
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+      const w = pdf.internal.pageSize.getWidth() - 10;
+      const h = w * (canvas.height / canvas.width);
+      let pos = 0, rem = h;
+      while (rem > 0) {
+        pdf.addImage(imgData, 'JPEG', 5, 5 - pos, w, h);
+        rem -= (pdf.internal.pageSize.getHeight() - 10);
+        pos += (pdf.internal.pageSize.getHeight() - 10);
+        if (rem > 0) pdf.addPage();
+      }
+      pdf.save(fname + '.pdf');
+    }
+  } catch(e) { alert('Export failed: ' + e.message); }
+  finally { setTimeout(() => container.innerHTML = '', 1000); }
+}
+
+// ============ BOQ EXPORT ============
+async function exportBOQ(format) {
+  // Let user choose which items to include
+  const itemsA = getTeamItems('A');
+  const itemsB = getTeamItems('B');
+  const allItems = [...itemsA, ...itemsB];
+  if (allItems.length === 0) { alert('No BOQ items to export.'); return; }
+
+  // Build selection dialog
+  const selections = {};
+  allItems.forEach(i => selections[i.id] = true);
+
+  const dlg = document.createElement('div');
+  dlg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  dlg.innerHTML = `
+    <div style="background:#292524;border:2px solid #f59e0b;padding:24px;max-width:520px;width:100%;max-height:80vh;overflow-y:auto;font-family:ui-monospace,monospace">
+      <div style="font-size:14px;font-weight:bold;color:#f59e0b;letter-spacing:0.1em;margin-bottom:16px">SELECT BOQ ITEMS TO EXPORT</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button onclick="(function(){document.querySelectorAll('.boq-chk').forEach(c=>c.checked=true)})()" style="padding:5px 10px;font-size:11px;background:#44403c;color:#f5f5f4;border:1px solid #57534e;cursor:pointer;font-family:inherit">SELECT ALL</button>
+        <button onclick="(function(){document.querySelectorAll('.boq-chk').forEach(c=>c.checked=false)})()" style="padding:5px 10px;font-size:11px;background:#44403c;color:#f5f5f4;border:1px solid #57534e;cursor:pointer;font-family:inherit">DESELECT ALL</button>
+      </div>
+      ${['A','B'].map(team => {
+        const items = getTeamItems(team);
+        if (items.length === 0) return '';
+        return `<div style="margin-bottom:10px">
+          <div style="font-size:11px;color:${team==='A'?'#38bdf8':'#c084fc'};font-weight:bold;letter-spacing:0.1em;margin-bottom:6px">TEAM ${team}</div>
+          ${items.map(i => `
+            <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:12px;color:#e7e5e4;border-bottom:1px solid rgba(68,64,60,0.3)">
+              <input type="checkbox" class="boq-chk" data-id="${i.id}" checked style="cursor:pointer" />
+              <span style="color:#a8a29e;font-size:11px;min-width:40px">${escapeHtml(i.itemCode)}</span>
+              <span style="flex:1">${escapeHtml(i.description)}</span>
+              <span style="color:#a8a29e;font-size:11px">${escapeHtml(i.unit)}</span>
+            </label>`).join('')}
+        </div>`;
+      }).join('')}
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button id="boqExportBtn" style="flex:1;padding:12px;background:#f59e0b;color:#0c0a09;border:none;cursor:pointer;font-weight:bold;font-size:12px;font-family:inherit;letter-spacing:0.1em">EXPORT ${format.toUpperCase()}</button>
+        <button onclick="this.closest('.boq-export-dlg').remove()" style="padding:12px 20px;background:#292524;color:#f5f5f4;border:1px solid #44403c;cursor:pointer;font-family:inherit">CANCEL</button>
+      </div>
+    </div>`;
+  dlg.className = 'boq-export-dlg';
+  document.body.appendChild(dlg);
+
+  document.getElementById('boqExportBtn').onclick = async () => {
+    const selected = [...document.querySelectorAll('.boq-chk:checked')].map(c => parseInt(c.dataset.id));
+    if (selected.length === 0) { alert('Select at least one item.'); return; }
+    dlg.remove();
+    await doBOQExport(format, selected);
+  };
+}
+
+async function doBOQExport(format, selectedIds) {
+  const p = state.projectInfo;
+  const selectedItems = (state.workItems || []).filter(i => selectedIds.includes(i.id));
+  const itemsA = selectedItems.filter(i => i.team === 'A');
+  const itemsB = selectedItems.filter(i => i.team === 'B');
+  const tPA = itemsA.reduce((s,i)=>s+(parseFloat(i.plannedQty)||0)*(parseFloat(i.rate)||0),0);
+  const tCA = itemsA.reduce((s,i)=>s+(parseFloat(i.completedQty)||0)*(parseFloat(i.rate)||0),0);
+  const tPB = itemsB.reduce((s,i)=>s+(parseFloat(i.plannedQty)||0)*(parseFloat(i.rate)||0),0);
+  const tCB = itemsB.reduce((s,i)=>s+(parseFloat(i.completedQty)||0)*(parseFloat(i.rate)||0),0);
+
+  function boqTableHTML(items, team, teamColor) {
+    if (items.length === 0) return '';
+    return `
+      <div style="margin-bottom:18px">
+        <div style="background:${teamColor};color:white;padding:7px 10px;font-weight:bold;font-size:12px;letter-spacing:0.1em">TEAM ${team} — BILL OF QUANTITIES</div>
+        <table style="width:100%;border-collapse:collapse;font-size:10px">
+          <thead>
+            <tr style="background:#f0f0f0">
+              <th style="border:1px solid #ccc;padding:5px;text-align:left">Code</th>
+              <th style="border:1px solid #ccc;padding:5px;text-align:left">Description</th>
+              <th style="border:1px solid #ccc;padding:5px;text-align:center">Unit</th>
+              <th style="border:1px solid #ccc;padding:5px;text-align:right">Planned Qty</th>
+              <th style="border:1px solid #ccc;padding:5px;text-align:right">Completed</th>
+              <th style="border:1px solid #ccc;padding:5px;text-align:right">Progress</th>
+              <th style="border:1px solid #ccc;padding:5px;text-align:right">Rate</th>
+              <th style="border:1px solid #ccc;padding:5px;text-align:right">Planned Value</th>
+              <th style="border:1px solid #ccc;padding:5px;text-align:right">Earned Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map((i,idx) => {
+              const prog = i.plannedQty > 0 ? (parseFloat(i.completedQty||0)/parseFloat(i.plannedQty)*100) : 0;
+              const pVal = (parseFloat(i.plannedQty)||0)*(parseFloat(i.rate)||0);
+              const eVal = (parseFloat(i.completedQty)||0)*(parseFloat(i.rate)||0);
+              return `<tr style="background:${idx%2===0?'white':'#fafafa'}">
+                <td style="border:1px solid #ccc;padding:4px 5px;color:#777">${escapeHtml(i.itemCode)||'—'}</td>
+                <td style="border:1px solid #ccc;padding:4px 5px;font-weight:500">${escapeHtml(i.description)}</td>
+                <td style="border:1px solid #ccc;padding:4px 5px;text-align:center;color:#555">${escapeHtml(i.unit)}</td>
+                <td style="border:1px solid #ccc;padding:4px 5px;text-align:right">${parseFloat(i.plannedQty||0).toLocaleString()}</td>
+                <td style="border:1px solid #ccc;padding:4px 5px;text-align:right;font-weight:bold">${parseFloat(i.completedQty||0).toLocaleString()}</td>
+                <td style="border:1px solid #ccc;padding:4px 5px;text-align:right;color:${prog>=100?'green':prog>=50?'#b45309':'#dc2626'}">${prog.toFixed(1)}%</td>
+                <td style="border:1px solid #ccc;padding:4px 5px;text-align:right">${parseFloat(i.rate||0).toLocaleString()}</td>
+                <td style="border:1px solid #ccc;padding:4px 5px;text-align:right">${pVal.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                <td style="border:1px solid #ccc;padding:4px 5px;text-align:right;color:green;font-weight:bold">${eVal.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  const container = document.getElementById('dprPrintContainer');
+  container.innerHTML = `
+    <div id="boqPrint" style="background:white;color:#0c0a09;padding:28px;font-family:Arial,sans-serif;max-width:900px">
+      <div style="text-align:center;border-bottom:3px solid #f59e0b;padding-bottom:8px;margin-bottom:6px">
+        <div style="font-size:18px;font-weight:bold">BILL OF QUANTITIES — PROGRESS REPORT</div>
+        <div style="font-size:11px;color:#555;margin-top:3px">${escapeHtml(p.name)} · ${escapeHtml(p.location)} · ${escapeHtml(p.contractor)}</div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#555;margin-bottom:14px;padding-bottom:6px;border-bottom:1px solid #e5e7eb">
+        <span>Engineer: ${escapeHtml(p.engineer)||'—'}</span>
+        <span>Date: ${new Date().toLocaleDateString()}</span>
+        <span>Chainage: ${escapeHtml(p.chainageStart)} – ${escapeHtml(p.chainageEnd)}</span>
+      </div>
+      ${boqTableHTML(itemsA,'A','#0ea5e9')}
+      ${boqTableHTML(itemsB,'B','#a855f7')}
+      <div style="display:flex;justify-content:flex-end;margin-top:10px">
+        <table style="font-size:11px;border-collapse:collapse">
+          <tr><td style="padding:4px 12px;color:#555;border:1px solid #e5e7eb">Total Contract Value</td><td style="padding:4px 12px;font-weight:bold;border:1px solid #e5e7eb;text-align:right">${(tPA+tPB).toLocaleString(undefined,{maximumFractionDigits:2})}</td></tr>
+          <tr style="background:#f0fdf4"><td style="padding:4px 12px;color:#555;border:1px solid #e5e7eb">Total Earned Value</td><td style="padding:4px 12px;font-weight:bold;color:green;border:1px solid #e5e7eb;text-align:right">${(tCA+tCB).toLocaleString(undefined,{maximumFractionDigits:2})}</td></tr>
+          <tr><td style="padding:4px 12px;color:#555;border:1px solid #e5e7eb">Remaining Value</td><td style="padding:4px 12px;font-weight:bold;color:#dc2626;border:1px solid #e5e7eb;text-align:right">${(tPA+tPB-tCA-tCB).toLocaleString(undefined,{maximumFractionDigits:2})}</td></tr>
+        </table>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:28px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:10px;color:#555">
+        <div style="text-align:center;width:160px"><div style="margin-top:28px;padding-top:5px;border-top:1px solid #44403c">PREPARED BY</div></div>
+        <div style="text-align:center;width:160px"><div style="margin-top:28px;padding-top:5px;border-top:1px solid #44403c">CHECKED BY</div></div>
+        <div style="text-align:center;width:160px"><div style="margin-top:28px;padding-top:5px;border-top:1px solid #44403c">APPROVED BY</div></div>
+      </div>
+    </div>`;
+
+  const el = document.getElementById('boqPrint');
+  try {
+    const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff' });
+    if (format === 'jpg') {
+      canvas.toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `BOQ-${new Date().toISOString().split('T')[0]}.jpg`; a.click(); }, 'image/jpeg', 0.95);
+    } else {
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a3' });
+      const w = pdf.internal.pageSize.getWidth() - 10;
+      const h = w * (canvas.height / canvas.width);
+      let pos = 0, rem = h;
+      while (rem > 0) {
+        pdf.addImage(imgData, 'JPEG', 5, 5 - pos, w, h);
+        rem -= (pdf.internal.pageSize.getHeight() - 10);
+        pos += (pdf.internal.pageSize.getHeight() - 10);
+        if (rem > 0) pdf.addPage();
+      }
+      pdf.save(`BOQ-${new Date().toISOString().split('T')[0]}.pdf`);
+    }
+  } catch (e) { alert('Export failed: ' + e.message); }
+  finally { setTimeout(() => container.innerHTML = '', 1000); }
+}
+
+// ============ USERS TAB (Admin only) ============
+function renderUsersTab() {
+  const roleColors = { admin:'#f59e0b', supervisor:'#10b981', foreman:'#0ea5e9', viewer:'#78716c' };
+  const roleDesc = {
+    admin: 'Full access — all tabs, approve DPRs, manage users, restore backups',
+    supervisor: 'View all, approve/reject DPRs, add plans, team management — cannot manage users',
+    foreman: 'Submit DPRs, log daily readings, report issues and completions — no BOQ/setup',
+    viewer: 'Read-only — can see everything but cannot add, edit, or delete anything'
+  };
+  return `
+    <div class="page-header">
+      <div><h2 class="page-title">USER MANAGEMENT</h2><p class="page-sub">Manage who can access the dashboard and what they can do</p></div>
+      <button class="btn btn-primary" onclick="state.showUserForm=true;state.userForm={name:'',email:'',password:'',role:'foreman'};state.userEditingId=null;render()">＋ ADD USER</button>
+    </div>
+
+    ${state.showUserForm ? `
+      <div class="form-card">
+        <div class="form-header">
+          <h3 class="section-title" style="margin:0;border:none;padding:0">${state.userEditingId?'EDIT':'NEW'} USER</h3>
+          <button class="icon-btn" onclick="state.showUserForm=false;render()">✕</button>
+        </div>
+        <div class="form-grid">
+          <div class="full">${fInput('FULL NAME','userForm','name',state.userForm.name,'text','e.g. John Mwansa')}</div>
+          <div class="full">${fInput('EMAIL ADDRESS','userForm','email',state.userForm.email,'email','e.g. john@email.com')}</div>
+          ${!state.userEditingId?fInput('PASSWORD','userForm','password',state.userForm.password,'password','minimum 6 characters'):'<div><label class="form-label">PASSWORD</label><input class="form-input" type="password" placeholder="Leave blank to keep current" oninput="state.userForm.password=this.value" /></div>'}
+          <div>
+            <label class="form-label">ROLE</label>
+            <select class="form-select" onchange="state.userForm.role=this.value;render()">
+              ${['admin','supervisor','foreman','viewer'].map(r=>`<option value="${r}" ${state.userForm.role===r?'selected':''}>${r.toUpperCase()}</option>`).join('')}
+            </select>
+            <div style="font-size:11px;color:#78716c;margin-top:5px">${roleDesc[state.userForm.role]||''}</div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="saveUser()">${state.userEditingId?'UPDATE USER':'CREATE USER'}</button>
+          <button class="btn" onclick="state.showUserForm=false;render()">CANCEL</button>
+        </div>
+      </div>` : ''}
+
+    <!-- Role guide -->
+    <div class="card" style="margin-bottom:18px">
+      <h2 class="section-title">ROLE PERMISSIONS</h2>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px">
+        ${Object.entries(roleDesc).map(([role, desc]) => `
+          <div style="border-left:3px solid ${roleColors[role]};padding:10px 14px;background:#1c1917">
+            <div style="color:${roleColors[role]};font-weight:bold;font-size:12px;letter-spacing:0.1em;margin-bottom:4px">${role.toUpperCase()}</div>
+            <div style="font-size:11px;color:#a8a29e">${desc}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+
+    <!-- Users table -->
+    ${state.users.length === 0 ? emptyState('🔑','NO USERS','Add team members so they can log in.') : `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>NAME</th><th>EMAIL</th><th>ROLE</th><th>CREATED</th><th></th></tr></thead>
+          <tbody>
+            ${state.users.map(u => `<tr>
+              <td style="font-weight:bold">${escapeHtml(u.name)}</td>
+              <td style="color:#a8a29e">${escapeHtml(u.email)}</td>
+              <td><span style="padding:3px 9px;font-size:10px;font-weight:bold;letter-spacing:0.1em;background:${roleColors[u.role]||'#44403c'}33;color:${roleColors[u.role]||'#a8a29e'};border:1px solid ${roleColors[u.role]||'#44403c'}">${(u.role||'').toUpperCase()}</span></td>
+              <td style="color:#a8a29e;font-size:11px">${(u.created_at||'').split('T')[0]}</td>
+              <td>
+                <button class="icon-btn amber" onclick="editUser(${u.id})">✎</button>
+                ${u.id !== currentUser?.id ? `<button class="icon-btn danger" onclick="deleteUser(${u.id})">🗑</button>` : '<span style="font-size:10px;color:#78716c">YOU</span>'}
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`}
+  `;
+}
+
+async function saveUser() {
+  const f = state.userForm;
+  if (!f.name || !f.email) { alert('Name and email required'); return; }
+  if (!state.userEditingId && !f.password) { alert('Password required for new user'); return; }
+  try {
+    if (state.userEditingId) {
+      await apiCall('PUT', `/api/users/${state.userEditingId}`, f);
+    } else {
+      await apiCall('POST', '/api/users', f);
+    }
+    state.users = await apiCall('GET', '/api/users');
+    state.showUserForm = false;
+    state.userEditingId = null;
+    showNotif('User saved ✓', 'success');
+    render();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+function editUser(id) {
+  const u = state.users.find(x => x.id === id);
+  if (!u) return;
+  state.userEditingId = id;
+  state.userForm = { name: u.name, email: u.email, role: u.role, password: '' };
+  state.showUserForm = true;
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function deleteUser(id) {
+  if (!confirm('Delete this user? They will no longer be able to log in.')) return;
+  try {
+    await apiCall('DELETE', `/api/users/${id}`);
+    state.users = await apiCall('GET', '/api/users');
+    showNotif('User deleted', 'success');
+    render();
+  } catch(e) { alert('Error: ' + e.message); }
 }
 
 // ============ SETTINGS ============
@@ -3772,8 +4530,9 @@ function importData(event) {
 }
 
 // ============ INIT ============
-loadState();
-render();
+// App starts via onLoggedIn() after API auth check above
+// No localStorage init needed — all data comes from server
+
 </script>
 
 </body>
